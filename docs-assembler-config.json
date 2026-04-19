@@ -1,0 +1,20 @@
+{
+    "organisation": "",
+    "contact": "",
+    "gitConfig": {
+        "owner": "Cheng12315",
+        "repo": "MiniProgram_Score",
+        "branch": "main",
+        "publishUrl": "https://Cheng12315.github.io/MiniProgram_Score/"
+    },
+    "repoConfig": {
+        "assetFolderName": "δ steps",
+        "variableFolderName": "Ω variables",
+        "publishFolderName": "pub",
+        "docsFolderName": "docs",
+        "mapsFolderName": "tsmaps"
+    },
+    "devConfig": {
+        "forceJsDelivr": false
+    }
+}
