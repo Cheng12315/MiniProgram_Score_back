@@ -230,7 +230,7 @@ router.get('/students', authAdmin, async (req, res) => {
     const total = countRows[0].count;
 
     const offset = (page - 1) * pageSize;
-    dataQuery += ' ORDER BY s.created_at DESC LIMIT ? OFFSET ?';
+    dataQuery += ' ORDER BY s.created_at DESC, s.id DESC LIMIT ? OFFSET ?';
     params.push(parseInt(pageSize), parseInt(offset));
 
     const [students] = await connection.query(dataQuery, params);
@@ -488,32 +488,57 @@ router.get('/semesters', authAdmin, async (req, res) => {
 
 // 新增学期
 router.post('/semesters', authAdmin, async (req, res) => {
+  let connection;
   try {
     const { semesterName, startDate, endDate } = req.body;
+
     if (!semesterName || !startDate || !endDate) {
       return res.status(400).json(errorResponse('学期名称、开始日期、结束日期不能为空', -1));
     }
-    const connection = await pool.getConnection();
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
     const [existing] = await connection.query(
       'SELECT id FROM semesters WHERE semester_name = ?',
       [semesterName.trim()]
     );
+
     if (existing.length > 0) {
+      await connection.rollback();
       connection.release();
       return res.status(409).json(errorResponse('学期名称已存在', -1));
     }
-    const [result] = await connection.query(
-      'INSERT INTO semesters (semester_name, start_date, end_date) VALUES (?, ?, ?)',
-      [semesterName.trim(), startDate, endDate]
+
+    const [rows] = await connection.query(
+      'SELECT COALESCE(MAX(sort_order), 0) + 1 AS nextSortOrder FROM semesters'
     );
+
+    const nextSortOrder = rows[0].nextSortOrder;
+
+    const [result] = await connection.query(
+      'INSERT INTO semesters (semester_name, sort_order, start_date, end_date) VALUES (?, ?, ?, ?)',
+      [semesterName.trim(), nextSortOrder, startDate, endDate]
+    );
+
+    await connection.commit();
     connection.release();
-    res.json(successResponse({ id: result.insertId }, '学期创建成功'));
+
+    res.json(successResponse({
+      id: result.insertId,
+      sortOrder: nextSortOrder
+    }, '学期创建成功'));
   } catch (err) {
+    if (connection) {
+      try {
+        await connection.rollback();
+        connection.release();
+      } catch (e) {}
+    }
     console.error('新增学期错误:', err);
     res.status(500).json(errorResponse('服务器错误', -1));
   }
 });
-
 // 激活学期
 router.patch('/semesters/:id/activate', authAdmin, async (req, res) => {
   try {
