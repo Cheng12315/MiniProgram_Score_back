@@ -243,6 +243,234 @@ router.get('/students', authAdmin, async (req, res) => {
   }
 });
 
+// 批量删除选中的学生
+router.post('/students/batch-delete', authAdmin, async (req, res) => {
+  let connection;
+
+  try {
+    const { studentIds } = req.body;
+
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.status(400).json(errorResponse('请选择要删除的学生', -1));
+    }
+
+    const uniqueStudentIds = [...new Set(
+      studentIds
+        .map(id => parseInt(id, 10))
+        .filter(id => Number.isInteger(id) && id > 0)
+    )];
+
+    if (uniqueStudentIds.length === 0) {
+      return res.status(400).json(errorResponse('学生ID无效', -1));
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const placeholders = uniqueStudentIds.map(() => '?').join(',');
+
+    const [students] = await connection.query(
+      `SELECT id, name, student_number, class_id
+       FROM students
+       WHERE id IN (${placeholders})`,
+      uniqueStudentIds
+    );
+
+    if (students.length === 0) {
+      await connection.rollback();
+      return res.status(404).json(errorResponse('未找到要删除的学生', -1));
+    }
+
+    const existingStudentIds = students.map(s => s.id);
+    const deletePlaceholders = existingStudentIds.map(() => '?').join(',');
+
+    // 先删积分记录
+    await connection.query(
+      `DELETE FROM score_records WHERE student_id IN (${deletePlaceholders})`,
+      existingStudentIds
+    );
+
+    // 再删学期汇总
+    await connection.query(
+      `DELETE FROM student_semester_scores WHERE student_id IN (${deletePlaceholders})`,
+      existingStudentIds
+    );
+
+    // 最后删学生
+    const [deleteResult] = await connection.query(
+      `DELETE FROM students WHERE id IN (${deletePlaceholders})`,
+      existingStudentIds
+    );
+
+    // 记录操作日志
+    await connection.query(
+      'INSERT INTO operation_logs (admin_id, operation_type, operation_details) VALUES (?, ?, ?)',
+      [
+        req.user.id,
+        'batch_delete_students',
+        JSON.stringify({
+          deletedCount: deleteResult.affectedRows,
+          studentIds: existingStudentIds,
+          studentNumbers: students.map(s => s.student_number)
+        })
+      ]
+    );
+
+    await connection.commit();
+
+    res.json(successResponse({
+      deletedCount: deleteResult.affectedRows
+    }, `已删除 ${deleteResult.affectedRows} 名学生及其相关积分记录`));
+  } catch (err) {
+    if (connection) {
+      try { await connection.rollback(); } catch (e) {}
+    }
+    console.error('批量删除学生错误:', err);
+    res.status(500).json(errorResponse('服务器错误', -1));
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+// 按选中班级批量删除学生
+router.post('/students/batch-delete-by-classes', authAdmin, async (req, res) => {
+  let connection;
+
+  try {
+    const { classIds } = req.body;
+
+    if (!Array.isArray(classIds) || classIds.length === 0) {
+      return res.status(400).json(errorResponse('请选择要删除的班级', -1));
+    }
+
+    const uniqueClassIds = [...new Set(
+      classIds
+        .map(id => parseInt(id, 10))
+        .filter(id => Number.isInteger(id) && id > 0)
+    )];
+
+    if (uniqueClassIds.length === 0) {
+      return res.status(400).json(errorResponse('班级ID无效', -1));
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const classPlaceholders = uniqueClassIds.map(() => '?').join(',');
+
+    // 查询班级信息
+    const [classRows] = await connection.query(
+      `SELECT id, class_name
+       FROM classes
+       WHERE id IN (${classPlaceholders})`,
+      uniqueClassIds
+    );
+
+    if (classRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json(errorResponse('未找到选中的班级', -1));
+    }
+
+    // 查询这些班级下的班主任
+    const [teachers] = await connection.query(
+      `SELECT id, username, class_id
+       FROM teachers
+       WHERE class_id IN (${classPlaceholders})`,
+      uniqueClassIds
+    );
+
+    // 查询这些班级下的学生
+    const [students] = await connection.query(
+      `SELECT id, student_number, class_id
+       FROM students
+       WHERE class_id IN (${classPlaceholders})`,
+      uniqueClassIds
+    );
+
+    const studentIds = students.map(s => s.id);
+    const teacherIds = teachers.map(t => t.id);
+
+    // 1. 删除学生相关数据
+    if (studentIds.length > 0) {
+      const studentPlaceholders = studentIds.map(() => '?').join(',');
+
+      await connection.query(
+        `DELETE FROM score_records WHERE student_id IN (${studentPlaceholders})`,
+        studentIds
+      );
+
+      await connection.query(
+        `DELETE FROM student_semester_scores WHERE student_id IN (${studentPlaceholders})`,
+        studentIds
+      );
+
+      await connection.query(
+        `DELETE FROM students WHERE id IN (${studentPlaceholders})`,
+        studentIds
+      );
+    }
+
+    // 2. 删除班主任前，先把操作日志里的 teacher_id 置空（避免外键/历史引用问题）
+    if (teacherIds.length > 0) {
+      const teacherPlaceholders = teacherIds.map(() => '?').join(',');
+
+      try {
+        await connection.query(
+          `UPDATE operation_logs
+           SET teacher_id = NULL
+           WHERE teacher_id IN (${teacherPlaceholders})`,
+          teacherIds
+        );
+      } catch (e) {
+        console.warn('批量删除班主任时，operation_logs.teacher_id 置空失败，继续尝试删除班主任:', e.message);
+      }
+
+      await connection.query(
+        `DELETE FROM teachers WHERE id IN (${teacherPlaceholders})`,
+        teacherIds
+      );
+    }
+
+    // 3. 最后删除班级
+    await connection.query(
+      `DELETE FROM classes WHERE id IN (${classPlaceholders})`,
+      uniqueClassIds
+    );
+
+    // 4. 记录操作日志
+    await connection.query(
+      'INSERT INTO operation_logs (admin_id, operation_type, operation_details) VALUES (?, ?, ?)',
+      [
+        req.user.id,
+        'batch_delete_classes_with_students_and_teachers',
+        JSON.stringify({
+          classIds: classRows.map(c => c.id),
+          classNames: classRows.map(c => c.class_name),
+          deletedStudentCount: students.length,
+          deletedTeacherCount: teachers.length,
+          deletedClassCount: classRows.length
+        })
+      ]
+    );
+
+    await connection.commit();
+
+    res.json(successResponse({
+      deletedStudentCount: students.length,
+      deletedTeacherCount: teachers.length,
+      deletedClassCount: classRows.length
+    }, `已删除 ${classRows.length} 个班级、${teachers.length} 个班主任账号、${students.length} 名学生及其相关积分记录`));
+  } catch (err) {
+    if (connection) {
+      try { await connection.rollback(); } catch (e) {}
+    }
+    console.error('按班级批量删除学生/班主任/班级错误:', err);
+    res.status(500).json(errorResponse('服务器错误', -1));
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
 // 导入学生数据（管理员导入全局）
 router.post('/students/import', authAdmin, upload.single('file'), async (req, res) => {
   const connection = await pool.getConnection();

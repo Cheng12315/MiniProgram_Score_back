@@ -396,3 +396,75 @@ td.negative { color: var(--danger); }
   color: var(--gray-500);
   margin-top: 0.25rem;
 }
+
+/* 学生管理 - 批量删除相关样式 */
+.toolbar .btn-auto {
+  width: auto;
+  padding: 0.5rem 0.9rem;
+}
+
+.student-actions-bar {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.selection-text {
+  margin-left: auto;
+  color: var(--gray-500);
+  font-size: 13px;
+}
+
+.checkbox-col {
+  width: 48px;
+  text-align: center;
+}
+
+.checkbox-col input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.table-empty {
+  text-align: center;
+  color: var(--gray-500);
+  padding: 1rem 0;
+}
+
+.class-checkbox-list {
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+  background: var(--gray-50);
+  padding: 0.25rem 0;
+}
+
+.check-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+}
+
+.check-item:hover {
+  background: #fff;
+}
+
+.check-item input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.equal-width-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.equal-width-actions .btn {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+}

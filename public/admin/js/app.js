@@ -256,18 +256,28 @@
   // ==================== 学生管理 ====================
   window.renderStudents = async function () {
     pageContent.innerHTML = '<div class="loading">加载中...</div>';
+  
     let page = 1;
     const pageSize = 10;
     let classId = '';
     let search = '';
-
+    const selectedStudentIds = new Set();
+  
     async function load() {
       try {
-        const res = await AdminAPI.getStudents(page, pageSize, classId, search);
+        const [res, classes] = await Promise.all([
+          AdminAPI.getStudents(page, pageSize, classId, search),
+          AdminAPI.getClasses()
+        ]);
+  
         const items = res?.items || [];
         const pagination = res?.pagination || { total: 0, totalPages: 0 };
-        const classes = await AdminAPI.getClasses();
-
+  
+        const currentPageIds = items.map(item => String(item.id));
+        const allCurrentPageChecked =
+          currentPageIds.length > 0 &&
+          currentPageIds.every(id => selectedStudentIds.has(id));
+  
         pageContent.innerHTML = `
           <h1 class="page-title">学生管理</h1>
           <div class="card">
@@ -275,21 +285,54 @@
               <div class="form-group">
                 <select id="student-class-filter">
                   <option value="">全部班级</option>
-                  ${(classes || []).map(c => `<option value="${c.id}" ${c.id == classId ? 'selected' : ''}>${escapeHtml(c.class_name)}</option>`).join('')}
+                  ${(classes || []).map(c => `
+                    <option value="${c.id}" ${String(c.id) === String(classId) ? 'selected' : ''}>
+                      ${escapeHtml(c.class_name)}
+                    </option>
+                  `).join('')}
                 </select>
               </div>
+  
               <div class="form-group">
                 <input type="text" id="student-search" placeholder="学号/姓名" value="${escapeHtml(search)}">
               </div>
-              <button class="btn btn-primary" id="student-search-btn">搜索</button>
-              <button class="btn btn-primary" id="student-import-btn">批量导入</button>
+  
+              <button class="btn btn-primary btn-auto" id="student-search-btn">搜索</button>
+              <button class="btn btn-primary btn-auto" id="student-import-btn">批量导入</button>
             </div>
+  
+            <div class="toolbar student-actions-bar">
+              <button class="btn btn-danger btn-auto" id="delete-selected-students-btn">删除选中学生</button>
+              <button class="btn btn-danger btn-auto" id="delete-by-class-btn">按班级批量删除</button>
+              <span class="selection-text">已选 <strong id="selected-student-count">${selectedStudentIds.size}</strong> 名学生</span>
+            </div>
+  
             <div class="table-container">
               <table>
-                <thead><tr><th>学号</th><th>姓名</th><th>班级</th><th>性别</th><th>当前分数</th><th>创建时间</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th class="checkbox-col">
+                      <input type="checkbox" id="student-check-all" ${allCurrentPageChecked ? 'checked' : ''}>
+                    </th>
+                    <th>学号</th>
+                    <th>姓名</th>
+                    <th>班级</th>
+                    <th>性别</th>
+                    <th>当前分数</th>
+                    <th>创建时间</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  ${items.map(s => `
+                  ${items.length > 0 ? items.map(s => `
                     <tr>
+                      <td class="checkbox-col">
+                        <input
+                          type="checkbox"
+                          class="student-check"
+                          data-id="${s.id}"
+                          ${selectedStudentIds.has(String(s.id)) ? 'checked' : ''}
+                        >
+                      </td>
                       <td>${escapeHtml(s.student_number)}</td>
                       <td>${escapeHtml(s.name)}</td>
                       <td>${escapeHtml(s.class_name || '-')}</td>
@@ -297,10 +340,15 @@
                       <td>${Math.round(parseFloat(s.current_score) || 0)}</td>
                       <td>${formatDateTime(s.created_at)}</td>
                     </tr>
-                  `).join('')}
+                  `).join('') : `
+                    <tr>
+                      <td colspan="7" class="table-empty">暂无学生数据</td>
+                    </tr>
+                  `}
                 </tbody>
               </table>
             </div>
+  
             <div class="pagination">
               <span class="pagination-info">共 ${pagination.total} 条</span>
               <div class="pagination-btns">
@@ -309,30 +357,45 @@
               </div>
             </div>
           </div>
+  
           <input type="file" id="import-file-input" accept=".xlsx,.xls,.csv" style="display:none">
         `;
-
+  
+        // 筛选班级
         pageContent.querySelector('#student-class-filter').onchange = (e) => {
           classId = e.target.value;
           page = 1;
+          selectedStudentIds.clear();
           load();
         };
+  
+        // 搜索
         pageContent.querySelector('#student-search-btn').onclick = () => {
           search = pageContent.querySelector('#student-search').value.trim();
           page = 1;
+          selectedStudentIds.clear();
           load();
         };
-        pageContent.querySelector('#student-import-btn').onclick = () => pageContent.querySelector('#import-file-input').click();
+  
+        // 导入
+        pageContent.querySelector('#student-import-btn').onclick = () => {
+          pageContent.querySelector('#import-file-input').click();
+        };
+  
         pageContent.querySelector('#import-file-input').onchange = async (e) => {
           const file = e.target.files[0];
           if (!file) return;
           e.target.value = '';
+  
           try {
             const result = await AdminAPI.importStudents(file);
-            load();
+            selectedStudentIds.clear();
+            await load();
+  
             const added = result.successCount?.added || 0;
             const updated = result.successCount?.updated || 0;
             const errs = result.errors || [];
+  
             if (errs.length > 0) {
               const modal = document.createElement('div');
               modal.className = 'modal-overlay';
@@ -342,10 +405,10 @@
                   <p>成功：新增 ${added}，更新 ${updated}</p>
                   <p style="color:var(--danger);margin-top:0.5rem">错误详情：</p>
                   <div style="max-height:200px;overflow-y:auto;font-size:12px;background:var(--gray-100);padding:0.5rem;border-radius:4px">
-                    ${errs.map(e => `<div style="margin:0.25rem 0">${escapeHtml(e)}</div>`).join('')}
+                    ${errs.map(err => `<div style="margin:0.25rem 0">${escapeHtml(err)}</div>`).join('')}
                   </div>
                   <div class="modal-actions" style="margin-top:1rem">
-                    <button type="button" class="btn btn-primary" id="import-modal-ok">确定</button>
+                    <button type="button" class="btn btn-primary btn-auto" id="import-modal-ok">确定</button>
                   </div>
                 </div>
               `;
@@ -358,14 +421,162 @@
             alert('导入失败：' + (err.message || '请检查文件格式'));
           }
         };
-        pageContent.querySelectorAll('.pagination-btns button').forEach(btn => {
-          if (!btn.disabled) btn.onclick = () => { page = parseInt(btn.dataset.page); load(); };
+  
+        // 全选当前页
+        const checkAllEl = pageContent.querySelector('#student-check-all');
+        if (checkAllEl) {
+          checkAllEl.onchange = (e) => {
+            currentPageIds.forEach(id => {
+              if (e.target.checked) {
+                selectedStudentIds.add(id);
+              } else {
+                selectedStudentIds.delete(id);
+              }
+            });
+            updateSelectionDisplay();
+          };
+        }
+  
+        // 单个勾选
+        pageContent.querySelectorAll('.student-check').forEach(el => {
+          el.onchange = (e) => {
+            const id = String(e.target.dataset.id);
+            if (e.target.checked) {
+              selectedStudentIds.add(id);
+            } else {
+              selectedStudentIds.delete(id);
+            }
+            updateSelectionDisplay();
+          };
         });
+  
+        // 删除选中学生
+        pageContent.querySelector('#delete-selected-students-btn').onclick = async () => {
+          const ids = Array.from(selectedStudentIds).map(id => parseInt(id, 10));
+  
+          if (ids.length === 0) {
+            alert('请先勾选要删除的学生');
+            return;
+          }
+  
+          const confirmed = confirm(
+            `确定删除选中的 ${ids.length} 名学生吗？\n\n删除后，这些学生对应的积分记录和学期总分也会一并删除，且无法恢复。`
+          );
+  
+          if (!confirmed) return;
+  
+          try {
+            const result = await AdminAPI.deleteStudents(ids);
+            selectedStudentIds.clear();
+  
+            if (page > 1 && items.length === ids.length) {
+              page = page - 1;
+            }
+  
+            await load();
+            alert(result?.message || `删除成功，共删除 ${result?.deletedCount || ids.length} 名学生`);
+          } catch (err) {
+            alert(err.message || '删除失败');
+          }
+        };
+  
+        // 按班级批量删除学生
+        pageContent.querySelector('#delete-by-class-btn').onclick = () => {
+          showDeleteByClassesModal(classes || []);
+        };
+  
+        // 分页
+        pageContent.querySelectorAll('.pagination-btns button').forEach(btn => {
+          if (!btn.disabled) {
+            btn.onclick = async () => {
+              page = parseInt(btn.dataset.page, 10);
+              await load();
+            };
+          }
+        });
+  
+        function updateSelectionDisplay() {
+          const countEl = pageContent.querySelector('#selected-student-count');
+          if (countEl) countEl.textContent = selectedStudentIds.size;
+  
+          const currentCheckboxes = pageContent.querySelectorAll('.student-check');
+          const currentIds = Array.from(currentCheckboxes).map(el => String(el.dataset.id));
+          const checkAll = pageContent.querySelector('#student-check-all');
+  
+          if (checkAll) {
+            checkAll.checked =
+              currentIds.length > 0 &&
+              currentIds.every(id => selectedStudentIds.has(id));
+          }
+        }
       } catch (err) {
         pageContent.innerHTML = `<div class="error-message">${err.message}</div>`;
       }
     }
-
+  
+    function showDeleteByClassesModal(classes) {
+      const modal = document.createElement('div');
+      modal.className = 'modal-overlay';
+  
+      modal.innerHTML = `
+        <div class="modal" style="max-width:560px">
+          <h3>按班级批量删除</h3>
+          <p style="margin:0.5rem 0 1rem;color:var(--gray-700)">
+            请选择需要删除的班级。删除后，这些班级下的全部学生、对应班主任账号、积分记录以及班级本身都会一并删除，且无法恢复。
+          </p>
+  
+          <div class="class-checkbox-list">
+            ${classes.length > 0 ? classes.map(c => `
+              <label class="check-item">
+                <input type="checkbox" name="delete-class" value="${c.id}">
+                <span>${escapeHtml(c.class_name)}</span>
+              </label>
+            `).join('') : '<div class="table-empty">暂无班级数据</div>'}
+          </div>
+  
+          <div class="modal-actions equal-width">
+            <button type="button" class="btn btn-outline btn-auto" id="delete-class-cancel">取消</button>
+            <button type="button" class="btn btn-danger btn-auto" id="delete-class-confirm">删除选中班级学生</button>
+          </div>
+        </div>
+      `;
+  
+      document.body.appendChild(modal);
+  
+      modal.querySelector('#delete-class-cancel').onclick = () => modal.remove();
+  
+      modal.querySelector('#delete-class-confirm').onclick = async () => {
+        const checkedEls = Array.from(modal.querySelectorAll('input[name="delete-class"]:checked'));
+        const classIds = checkedEls.map(el => parseInt(el.value, 10));
+  
+        if (classIds.length === 0) {
+          alert('请先选择班级');
+          return;
+        }
+  
+        const selectedClassNames = classes
+          .filter(c => classIds.includes(parseInt(c.id, 10)))
+          .map(c => c.class_name);
+  
+        const confirmed = confirm(
+          `确定删除以下班级下的全部学生吗？\n\n${selectedClassNames.join('、')}\n\n删除后，这些班级下的全部学生、对应班主任账号、积分记录以及班级本身都会一并删除，且无法恢复。`
+        );
+  
+        if (!confirmed) return;
+  
+        try {
+          const result = await AdminAPI.deleteStudentsByClasses(classIds);
+          selectedStudentIds.clear();
+          page = 1;
+          modal.remove();
+          await load();
+          alert(result?.message || `删除成功`);
+        } catch (err) {
+          alert(err.message || '删除失败');
+        }
+      };
+    }
+  
     load();
   };
 

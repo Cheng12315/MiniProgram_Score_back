@@ -99,6 +99,22 @@ const AdminAPI = {
     return data.data;
   },
 
+  async deleteStudents(studentIds) {
+    const res = await request('/api/admin/students/batch-delete', {
+      method: 'POST',
+      body: JSON.stringify({ studentIds })
+    });
+    return res.data;
+  },
+
+  async deleteStudentsByClasses(classIds) {
+    const res = await request('/api/admin/students/batch-delete-by-classes', {
+      method: 'POST',
+      body: JSON.stringify({ classIds })
+    });
+    return res.data;
+  },
+
   // 学期
   async getSemesters() {
     const res = await request('/api/admin/semesters');
