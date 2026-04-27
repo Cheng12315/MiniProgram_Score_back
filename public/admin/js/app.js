@@ -202,7 +202,7 @@
             <h3>新增班主任</h3>
             <form id="add-teacher-form">
               <div class="form-group"><label>用户名</label><input name="username" required placeholder="3-20位字母数字下划线"></div>
-              <div class="form-group"><label>密码</label><input type="text" name="password" required placeholder="至少8位"></div>
+              <div class="form-group"><label>密码</label><input type="text" name="password" required placeholder="至少6位"></div>
               <div class="form-group"><label>真实姓名</label><input name="realName" required placeholder="2-4位汉字"></div>
               <div class="form-group"><label>所属班级</label>
                 <select name="classId" required>

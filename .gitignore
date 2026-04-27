@@ -37,3 +37,4 @@ pub/
 .bin/
 **/*.tscom
 
+.env.save
