@@ -468,3 +468,9 @@ td.negative { color: var(--danger); }
   width: 100%;
   min-width: 0;
 }
+
+.beian-icon {
+  width: 16px;
+  height: 16px;
+  margin-left: 10px;
+}
